@@ -1,165 +1,177 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+/**
+ * Farcana Token
+*/
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+pragma solidity ^0.4.24;
 
-contract TokenVesting is Ownable {
-    using SafeERC20 for IERC20;
-    using SafeMath for uint256;
+library SafeMath {
+  function mul(uint256 a, uint256 b) internal pure returns (uint256) {
+    if (a == 0) {
+      return 0;
+    }
+    uint256 c = a * b;
+    assert(c / a == b);
+    return c;
+  }
 
-    IERC20 private token;
+  function div(uint256 a, uint256 b) internal pure returns (uint256) {
+    // assert(b > 0); // Solidity automatically throws when dividing by 0
+    uint256 c = a / b;
+    // assert(a == b * c + a % b); // There is no case in which this doesn't hold
+    return c;
+  }
+
+  function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+    assert(b <= a);
+    return a - b;
+  }
+
+  function add(uint256 a, uint256 b) internal pure returns (uint256) {
+    uint256 c = a + b;
+    assert(c >= a);
+    return c;
+  }
+}
+
+contract Ownable {
+  address public owner;
+
+
+  event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+  /**
+   * @dev Throws if called by any account other than the owner.
+   */
+  modifier onlyOwner() {
+    require(msg.sender == owner);
+    _;
+  }
+
+
+  /**
+   * @dev Allows the current owner to transfer control of the contract to a newOwner.
+   * @param newOwner The address to transfer ownership to.
+   */
+  function transferOwnership(address newOwner) external onlyOwner {
+    require(newOwner != address(0));
+    emit OwnershipTransferred(owner, newOwner);
+    owner = newOwner;
+  }
+
+}
+
+contract ERC20Basic {
+  function balanceOf(address who) public view returns (uint256);
+  function transfer(address to, uint256 value) public returns (bool);
+  event Transfer(address indexed from, address indexed to, uint256 value);
+}
+
+contract ERC20 is ERC20Basic {
+  function allowance(address owner, address spender) public view returns (uint256);
+  function transferFrom(address from, address to, uint256 value) public returns (bool);
+  function approve(address spender, uint256 value) public returns (bool);
+  event Approval(address indexed owner, address indexed spender, uint256 value);
+}
+
+
+contract StandardToken is ERC20 {
+  using SafeMath for uint256;
+
+  mapping (address => mapping (address => uint256)) internal allowed;
+
+
+  mapping(address => uint256) balances;
+
+
+  function transfer(address _to, uint256 _value) public returns (bool) {
+    require(_to != address(0));
+    require(_value <= balances[msg.sender]);
+
+    // SafeMath.sub will throw if there is not enough balance.
+    balances[msg.sender] = balances[msg.sender].sub(_value);
+    balances[_to] = balances[_to].add(_value);
+    emit Transfer(msg.sender, _to, _value);
+    return true;
+  }
+
+
+  function balanceOf(address _owner) public view returns (uint256 balance) {
+    return balances[_owner];
+  }
+
+  function transferFrom(address _from, address _to, uint256 _value) public returns (bool) {
+    require(_to != address(0));
+    require(_value <= balances[_from]);
+    require(_value <= allowed[_from][msg.sender]);
+
+    balances[_from] = balances[_from].sub(_value);
+    balances[_to] = balances[_to].add(_value);
+    allowed[_from][msg.sender] = allowed[_from][msg.sender].sub(_value);
+    emit Transfer(_from, _to, _value);
+    return true;
+  }
+
+
+  function approve(address _spender, uint256 _value) public returns (bool) {
+    allowed[msg.sender][_spender] = _value;
+    emit Approval(msg.sender, _spender, _value);
+    return true;
+  }
+
+
+  function allowance(address _owner, address _spender) public view returns (uint256) {
+    return allowed[_owner][_spender];
+  }
+
+
+  function increaseApproval(address _spender, uint _addedValue) public returns (bool) {
+    allowed[msg.sender][_spender] = allowed[msg.sender][_spender].add(_addedValue);
+    emit Approval(msg.sender, _spender, allowed[msg.sender][_spender]);
+    return true;
+  }
+
+  function decreaseApproval(address _spender, uint _subtractedValue) public returns (bool) {
+    uint oldValue = allowed[msg.sender][_spender];
+    if (_subtractedValue > oldValue) {
+      allowed[msg.sender][_spender] = 0;
+    } else {
+      allowed[msg.sender][_spender] = oldValue.sub(_subtractedValue);
+    }
+    emit Approval(msg.sender, _spender, allowed[msg.sender][_spender]);
+    return true;
+  }
+
+}
+
+contract FarcanaToken is StandardToken, Ownable {
+    string public name;
+    string public symbol;
+    uint public decimals;
+    uint256 public totalSupply;
+    event Mint(address indexed from, address indexed to, uint256 value);
+    event Burn(address indexed burner, uint256 value);
+
+	
+    constructor(string memory _name, string memory _symbol, uint256 _decimals, uint256 _supply, address tokenOwner) public {
+        name = _name;
+        symbol = _symbol;
+        decimals = _decimals;
+        totalSupply = _supply * 10**_decimals;
+        balances[tokenOwner] = totalSupply;
+        owner = tokenOwner;
+        emit Transfer(address(0), tokenOwner, totalSupply);
+    }
+	
+	function burn(uint256 _value) public onlyOwner {
+		_burn(msg.sender, _value);
+	}
+
+	function _burn(address _who, uint256 _value) internal {
+		require(_value <= balances[_who]);
+		balances[_who] = balances[_who].sub(_value);
+		totalSupply = totalSupply.sub(_value);
+		emit Burn(_who, _value);
+		emit Transfer(_who, address(0), _value);
+	}
     
-    struct VestingSchedule {
-        uint256 cliff; // cliff time of the vesting start in seconds since the UNIX epoch
-        uint256 duration; // duration of the vesting period in seconds
-        uint256 start; // start time of the vesting period in seconds since the UNIX epoch
-        uint256 totalAmount; // total amount of tokens to be released at the end of the vesting
-        uint256 released;  // amount of tokens released
-    }
-
-    uint256 tgetime;
-
-    mapping(address => VestingSchedule[]) private vestingSchedules;
-
-    event TokensReleased(address indexed beneficiary, uint256 amount);
-
-    constructor(address token_address) {
-        token = IERC20(token_address);
-        tgetime = block.timestamp + 14 * 86400;
-    }
-
-    function setTGEtime(uint256 new_tge_time) external onlyOwner{
-        tgetime = new_tge_time;
-    }
-
-    function getTGEtime() external view returns (uint256){
-        return tgetime;
-    }
-
-    function getToken() external view returns (address) {
-        return address(token);
-    }
-
-    function addVestingSchedule(
-        address beneficiary,
-        uint256 cliff,
-        uint256 duration,
-        uint256 start,
-        uint256 totalAmount
-    ) external onlyOwner {
-        VestingSchedule memory schedule = VestingSchedule({
-            cliff: cliff,
-            duration: duration,
-            start: start,
-            totalAmount: totalAmount,
-            released: 0
-        });
-
-        vestingSchedules[beneficiary].push(schedule);
-    }
-
-    function claim() external {
-        
-        uint256 unreleased = prepareAvailableTokensForRelease(msg.sender);
-
-        require(unreleased > 0, "No tokens are due for release");
-
-        token.transfer(msg.sender, unreleased);
-    }
-
-    function getReleasedTokens(address beneficiary) external view returns(uint256) {
-        
-        VestingSchedule[] storage schedules = vestingSchedules[beneficiary];
-
-        uint256 released = 0;
-
-        for (uint256 i = 0; i < schedules.length; i++) {
-            
-            VestingSchedule storage schedule = schedules[i];
-
-            if(schedule.released > 0){
-                released = released.add(schedule.released);
-            }
-        }
-
-        return released;
-    }
-
-    function getAvailableTokens(address beneficiary) external view returns(uint256) {
-
-        VestingSchedule[] storage schedules = vestingSchedules[beneficiary];
-
-        uint256 unreleased = 0;
-
-        for (uint256 i = 0; i < schedules.length; i++) {
-            VestingSchedule storage schedule = schedules[i];
-
-            if (block.timestamp < schedule.start.add(schedule.cliff)) {
-                continue;
-            }
-
-            uint256 vestedAmount = calculateVestedAmount(schedule);
-            uint256 releaseable = vestedAmount.sub(schedule.released);
-            
-            if (releaseable > 0) {
-                unreleased = unreleased.add(releaseable);
-            }
-        }
-
-        return unreleased;
-    }
-
-    function prepareAvailableTokensForRelease(address beneficiary) internal returns(uint256) {
-
-        VestingSchedule[] storage schedules = vestingSchedules[beneficiary];
-
-        uint256 unreleased = 0;
-
-        for (uint256 i = 0; i < schedules.length; i++) {
-            VestingSchedule storage schedule = schedules[i];
-
-            if (block.timestamp < schedule.start.add(schedule.cliff)) {
-                continue;
-            }
-
-            uint256 vestedAmount = calculateVestedAmount(schedule);
-            uint256 releaseable = vestedAmount.sub(schedule.released);
-            
-            if (releaseable > 0) {
-                unreleased = unreleased.add(releaseable);
-                schedule.released = schedule.released.add(releaseable);
-                emit TokensReleased(msg.sender, releaseable);
-            }
-        }
-
-        return unreleased;
-    }
-
-    function calculateVestedAmount(VestingSchedule storage schedule) internal view returns (uint256) {
-        uint256 currentTimestamp = block.timestamp;
-
-        if (currentTimestamp < schedule.start) {
-            return 0;
-        } else if (currentTimestamp >= schedule.start.add(schedule.duration)) {
-            return schedule.totalAmount;
-        } else {
-            return schedule.totalAmount.mul(currentTimestamp.sub(schedule.start)).div(schedule.duration);
-        }
-    }
-
-    function changeBeneficiaryAddress(address lost_address, address new_address) external onlyOwner{
-        
-        VestingSchedule[] storage schedules = vestingSchedules[lost_address];
-
-        vestingSchedules[new_address] = schedules;
-
-        delete vestingSchedules[lost_address];
-    }
-
-    function getFullDataOfBeneficiary(address beneficiary) external view onlyOwner returns(VestingSchedule[] memory) {
-        return vestingSchedules[beneficiary];
-    }
 }
