@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-contract TokenVesting is Ownable {
+contract TokenVesting is Ownable2Step  {
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
 
@@ -22,21 +22,32 @@ contract TokenVesting is Ownable {
 
     uint256 tgetime;
 
+    uint256 tvl; // total value locked(in FARs)
+
     mapping(address => VestingSchedule[]) private vestingSchedules;
 
     event TokensReleased(address indexed beneficiary, uint256 amount);
 
-    constructor(address token_address) {
+    constructor(address token_address) Ownable(msg.sender){
+
+        require(token_address != address(0), "Token address can not be zero");
+
         token = IERC20(token_address);
-        tgetime = block.timestamp + 14 * 86400;
+        tgetime = 0;
+        tvl = 0;
     }
 
     function setTGEtime(uint256 new_tge_time) external onlyOwner{
+        require(tgetime == 0, "TGE has already set");
         tgetime = new_tge_time;
     }
 
     function getTGEtime() external view returns (uint256){
         return tgetime;
+    }
+
+    function getTVL() external view returns (uint256){
+        return tvl;
     }
 
     function getToken() external view returns (address) {
@@ -50,6 +61,19 @@ contract TokenVesting is Ownable {
         uint256 start,
         uint256 totalAmount
     ) external onlyOwner {
+
+        require(tgetime > 0, "TGE time is not set");
+        require(start >= tgetime, "Start time should be greater or equal than TGE time");
+        require(cliff > 0, "Cliff should be positive");
+        require(duration > 0, "Duration should be positive");
+        require(cliff <= duration, "Cliff should not exceed duration");
+        require(address(token) != address(0), "Token address can not be zero");
+
+        uint totalTokensOfSmartContract = token.balanceOf(address(this));
+        uint availableTokensOfSmartContract = totalTokensOfSmartContract - tvl;
+
+        require(totalAmount <= availableTokensOfSmartContract, "The smart contract does not have enough tokens");
+
         VestingSchedule memory schedule = VestingSchedule({
             cliff: cliff,
             duration: duration,
@@ -59,6 +83,8 @@ contract TokenVesting is Ownable {
         });
 
         vestingSchedules[beneficiary].push(schedule);
+
+        tvl += totalAmount;
     }
 
     function claim() external {
@@ -67,7 +93,9 @@ contract TokenVesting is Ownable {
 
         require(unreleased > 0, "No tokens are due for release");
 
-        token.transfer(msg.sender, unreleased);
+        token.safeTransfer(msg.sender, unreleased);
+
+        tvl -= unreleased;
     }
 
     function getReleasedTokens(address beneficiary) external view returns(uint256) {
