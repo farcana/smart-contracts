@@ -187,7 +187,7 @@ contract TokenVesting is Ownable2Step  {
         delete vestingSchedules[lost_address];
     }
 
-    function getFullDataOfBeneficiary(address beneficiary) external view onlyOwner returns(VestingSchedule[] memory) {
+    function getFullDataOfBeneficiary(address beneficiary) external view returns(VestingSchedule[] memory) {
         return vestingSchedules[beneficiary];
     }
 }
