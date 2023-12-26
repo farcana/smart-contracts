@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
+/// @title The FARCANA token(FAR) vesting contract
+/// @author Adam Zaitov
+/// @notice This smart contract is used to block investor tokens and then unlock them according to a schedule
 contract TokenVesting is Ownable2Step  {
     using SafeERC20 for IERC20;
-    using SafeMath for uint256;
 
     IERC20 private token;
     
@@ -20,26 +21,28 @@ contract TokenVesting is Ownable2Step  {
         uint256 released;  // amount of tokens released
     }
 
-    uint256 tgetime;
+    uint256 internal tgetime;
 
-    uint256 tvl; // total value locked(in FARs)
+    uint256 internal tvl; // total value locked(in FARs)
 
     mapping(address => VestingSchedule[]) private vestingSchedules;
 
     event TokensReleased(address indexed beneficiary, uint256 amount);
+    event TGEtime(uint256 new_tge_time);
+    event AddedVestingSchedule(address indexed beneficiary, uint256 cliff, uint256 duration, uint256 start, uint256 totalAmount);
+    event ChangedBeneficiaryAddress(address indexed lost_address, address indexed new_address);
 
     constructor(address token_address) Ownable(msg.sender){
 
         require(token_address != address(0), "Token address can not be zero");
 
         token = IERC20(token_address);
-        tgetime = 0;
-        tvl = 0;
     }
 
     function setTGEtime(uint256 new_tge_time) external onlyOwner{
         require(tgetime == 0, "TGE has already set");
         tgetime = new_tge_time;
+        emit TGEtime(new_tge_time);
     }
 
     function getTGEtime() external view returns (uint256){
@@ -67,7 +70,7 @@ contract TokenVesting is Ownable2Step  {
         require(cliff > 0, "Cliff should be positive");
         require(duration > 0, "Duration should be positive");
         require(cliff <= duration, "Cliff should not exceed duration");
-        require(address(token) != address(0), "Token address can not be zero");
+        require(beneficiary != address(0), "Beneficiary address can not be zero");
 
         uint totalTokensOfSmartContract = token.balanceOf(address(this));
         uint availableTokensOfSmartContract = totalTokensOfSmartContract - tvl;
@@ -85,6 +88,8 @@ contract TokenVesting is Ownable2Step  {
         vestingSchedules[beneficiary].push(schedule);
 
         tvl += totalAmount;
+
+        emit AddedVestingSchedule(beneficiary, cliff, duration, start, totalAmount);
     }
 
     function claim() external {
@@ -109,7 +114,7 @@ contract TokenVesting is Ownable2Step  {
             VestingSchedule storage schedule = schedules[i];
 
             if(schedule.released > 0){
-                released = released.add(schedule.released);
+                released = released + schedule.released;
             }
         }
 
@@ -125,15 +130,15 @@ contract TokenVesting is Ownable2Step  {
         for (uint256 i = 0; i < schedules.length; i++) {
             VestingSchedule storage schedule = schedules[i];
 
-            if (block.timestamp < schedule.start.add(schedule.cliff)) {
+            if (block.timestamp < schedule.start + schedule.cliff) {
                 continue;
             }
 
             uint256 vestedAmount = calculateVestedAmount(schedule);
-            uint256 releaseable = vestedAmount.sub(schedule.released);
+            uint256 releaseable = vestedAmount - schedule.released;
             
             if (releaseable > 0) {
-                unreleased = unreleased.add(releaseable);
+                unreleased = unreleased + releaseable;
             }
         }
 
@@ -149,16 +154,16 @@ contract TokenVesting is Ownable2Step  {
         for (uint256 i = 0; i < schedules.length; i++) {
             VestingSchedule storage schedule = schedules[i];
 
-            if (block.timestamp < schedule.start.add(schedule.cliff)) {
+            if (block.timestamp < schedule.start + schedule.cliff) {
                 continue;
             }
 
             uint256 vestedAmount = calculateVestedAmount(schedule);
-            uint256 releaseable = vestedAmount.sub(schedule.released);
+            uint256 releaseable = vestedAmount - schedule.released;
             
             if (releaseable > 0) {
-                unreleased = unreleased.add(releaseable);
-                schedule.released = schedule.released.add(releaseable);
+                unreleased = unreleased + releaseable;
+                schedule.released = schedule.released + releaseable;
                 emit TokensReleased(msg.sender, releaseable);
             }
         }
@@ -171,13 +176,17 @@ contract TokenVesting is Ownable2Step  {
 
         if (currentTimestamp < schedule.start) {
             return 0;
-        } else if (currentTimestamp >= schedule.start.add(schedule.duration)) {
+        } else if (currentTimestamp >= schedule.start + schedule.duration) {
             return schedule.totalAmount;
         } else {
-            return schedule.totalAmount.mul(currentTimestamp.sub(schedule.start)).div(schedule.duration);
+            return schedule.totalAmount * (currentTimestamp - schedule.start) / schedule.duration;
         }
     }
 
+    /// @notice This function is intended in case the beneficiary loses his wallet
+    /// @dev No minting of additional tokens or premature unlocking of existing ones. Only the beneficiary's address can be replaced while maintaining the current state of token locking
+    /// @param lost_address - an old address, which will be replaced
+    /// @param new_address - a new address, which will be set 
     function changeBeneficiaryAddress(address lost_address, address new_address) external onlyOwner{
         
         VestingSchedule[] storage schedules = vestingSchedules[lost_address];
@@ -185,6 +194,8 @@ contract TokenVesting is Ownable2Step  {
         vestingSchedules[new_address] = schedules;
 
         delete vestingSchedules[lost_address];
+
+        emit ChangedBeneficiaryAddress(lost_address, new_address);
     }
 
     function getFullDataOfBeneficiary(address beneficiary) external view returns(VestingSchedule[] memory) {

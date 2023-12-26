@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity 0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-contract FarcanaToken is ERC20, Ownable {
+contract FarcanaToken is ERC20, Ownable2Step {
     event Burn(address indexed burner, uint256 value);
 
 	
